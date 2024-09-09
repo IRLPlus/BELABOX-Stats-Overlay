@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BELABOX Cloud Stats Overlay</title>
+    <style>
+        body {
+            background-color: rgba(0, 0, 0, 0); 
+            color: white; 
+            font-size: 20px; 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            display: flex;
+            flex-direction: column; 
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #chart-container {
+            width: 300px; 
+            height: 150px; 
+            margin-bottom: 10px; 
+        }
+
+        #stats {
+            font-size: 16px; 
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="chart-container" style="display: none;">
+        <canvas id="bitrateChart"></canvas>
+    </div>
+    <div id="stats">Loading stats...</div>
+    <script>
+        function getQueryParam(param) {
+            const value = new URLSearchParams(window.location.search).get(param);
+            return value ? value.trim() : null;
+        }
+
+        function isValidURL(url) {
+            try {
+                new URL(url);
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        const statsUrl = getQueryParam('stats_url');
+        const refreshIntervalStr = getQueryParam('refresh_interval');
+        const refreshInterval = refreshIntervalStr && !isNaN(refreshIntervalStr) ? Math.max(parseInt(refreshIntervalStr, 10), 1) : 5; 
+        const showRTT = getQueryParam('show_rtt') === 'true'; 
+        const showAdvancedStats = getQueryParam('advanced_stats') === 'true'; 
+
+        let bitrateChart = null;
+        const bitrateData = [];
+
+        if (!statsUrl || !isValidURL(statsUrl)) {
+            document.getElementById('stats').textContent = 'Error: Invalid or missing stats URL. Please check your BELABOX Cloud account.';
+        } else {
+            function initChart() {
+                const ctx = document.getElementById('bitrateChart').getContext('2d');
+                bitrateChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [], // Time labels
+                        datasets: [{
+                            label: 'Bitrate (Kbps)',
+                            data: bitrateData,
+                            borderColor: 'white',
+                            backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                            borderWidth: 1,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            x: {
+                                display: false 
+                            },
+                            y: {
+                                beginAtZero: true,
+                                color: 'white',
+                                title: {
+                                    display: true,
+                                    text: 'Bitrate (Kbps)',
+                                    color: 'white'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false 
+                            }
+                        }
+                    }
+                });
+            }
+
+            async function updateStats() {
+                try {
+                    const response = await fetch(statsUrl);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error. Returned Status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    let publisher;
+
+                    if (data.publishers.live) {
+                        // Use 'live' publisher for global stats
+                        publisher = data.publishers.live;
+                    } else {
+                        // Use the specific key provided in the URL
+                        const apiKey = statsUrl.split('/').pop();
+                        publisher = data.publishers[apiKey];
+                    }
+
+                    if (!publisher) {
+                        throw new Error('Invalid response format or invalid key.');
+                    }
+
+                    const bitrate = publisher.bitrate;
+                    const rtt = publisher.rtt;
+                    const droppedPackets = publisher.dropped_pkts;
+
+                    let displayText = `Bitrate: ${bitrate} Kbps`;
+                    if (showRTT) {
+                        displayText += ` | RTT: ${rtt} ms`;
+                    }
+                    if (showAdvancedStats) {
+                        displayText += ` | Dropped Packets: ${droppedPackets}`;
+                    }
+
+                    document.getElementById('stats').textContent = displayText;
+
+                    if (showAdvancedStats) {
+                        bitrateData.push(bitrate);
+                        if (bitrateChart.data.labels.length >= 20) {
+                            bitrateData.shift();
+                            bitrateChart.data.labels.shift();
+                        }
+                        const now = new Date();
+                        bitrateChart.data.labels.push(`${now.getMinutes()}:${now.getSeconds()}`);
+                        bitrateChart.update();
+                    }
+                } catch (error) {
+                    document.getElementById('stats').textContent = 'Error fetching stats. Check the supplied key.';
+                }
+            }
+
+            if (showAdvancedStats) {
+                document.getElementById('chart-container').style.display = 'block'; 
+                initChart();
+            }
+
+            setInterval(updateStats, refreshInterval * 1000); 
+            updateStats(); 
+        }
+    </script>
+</body>
+</html>
